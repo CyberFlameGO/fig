@@ -124,7 +124,7 @@ impl Block {
     pub fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
         use Instruction::*;
 
-        writeln!(w, "{}", self.name)?;
+        writeln!(w, "{}:", self.name)?;
         for instruction in &self.instructions {
             match *instruction {
                 Load { storage, value } => {
