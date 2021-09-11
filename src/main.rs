@@ -13,12 +13,12 @@ fn run_command(cmd: &str) -> std::io::Result<()> {
 fn main() -> std::io::Result<()> {
     let mut start = Block::new("_start".into());
 
-    let left = start.build_load(5);
-    let right = start.build_load(7);
+    let left = start.build_constant(5);
+    let right = start.build_constant(7);
     let res = start.build_multiply(left, right);
     start.build_call("put_int".into(), Some(res));
 
-    let exit = start.build_load(0);
+    let exit = start.build_constant(0);
     start.build_exit(exit);
 
     let mut module = Module::default();

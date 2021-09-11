@@ -10,7 +10,7 @@ pub type ValueRef = Register;
 #[derive(Debug)]
 enum Instruction<'a> {
     /// Introduce a new value to the code to be used by other instructions.
-    Load { storage: ValueRef, value: Value },
+    Constant { storage: ValueRef, value: Value },
     /// Add two values.
     Add { left: ValueRef, right: ValueRef },
     /// Subtract two values.
@@ -153,7 +153,7 @@ impl<'a> Block<'a> {
         writeln!(w, "{}:", self.name)?;
         for instruction in &self.instructions {
             match *instruction {
-                Load { storage, value } => {
+                Constant { storage, value } => {
                     writeln!(w, "\tmov {}, {}", storage.name(), value)?;
                 }
                 Add { left, right } => {
@@ -208,11 +208,12 @@ impl<'a> Block<'a> {
         Ok(())
     }
 
-    /// Append a `Load` instruction to the end of this block.
+    /// Append a `Constant` instruction to the end of this block.
     /// Returns a reference to the value to be used in other instructions.
-    pub fn build_load(&mut self, value: Value) -> ValueRef {
+    pub fn build_constant(&mut self, value: Value) -> ValueRef {
         let storage = self.registers.alloc();
-        self.instructions.push(Instruction::Load { storage, value });
+        self.instructions
+            .push(Instruction::Constant { storage, value });
         storage
     }
 
