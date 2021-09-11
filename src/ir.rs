@@ -1,16 +1,34 @@
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 /// A value.
 type Value = i64;
 
 /// Reference to a value created by an instruction.
-pub type ValueRef = Register;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueRef {
+    Register(Register),
+    Memory(usize),
+}
+
+impl ValueRef {
+    pub fn code(self) -> Cow<'static, str> {
+        use ValueRef::*;
+        match self {
+            Register(reg) => Cow::Borrowed(reg.name()),
+            Memory(off) => Cow::Owned(format!("[rbp-{}]", off)),
+        }
+    }
+}
 
 /// Instructions of the IR to be compiled into native code.
 #[derive(Debug)]
-enum Instruction<'a> {
+enum Instruction {
     /// Introduce a new value to the code to be used by other instructions.
     Constant { storage: ValueRef, value: Value },
+    /// Allocate memory on the stack.
+    Alloc { size: usize },
+    /// Store a value in memory.
+    Store { value: ValueRef, storage: ValueRef },
     /// Add two values.
     Add { left: ValueRef, right: ValueRef },
     /// Subtract two values.
@@ -19,11 +37,10 @@ enum Instruction<'a> {
     Multiply { left: ValueRef, right: ValueRef },
     /// Divide two values.
     Divide { left: ValueRef, right: ValueRef },
+    /// Jump to the given block.
+    Jump { dest: String },
     /// Jump to the given block if the value is 0.
-    JumpIfZero {
-        value: ValueRef,
-        dest: &'a Block<'a>,
-    },
+    JumpIfZero { value: ValueRef, dest: String },
     /// Call a function by its name with a single argument.
     Call { func: String, arg: Option<ValueRef> },
     /// Exit the process with the given exit code.
@@ -103,43 +120,99 @@ impl RegisterAlloc {
     }
 }
 
-/// A module is a collection of blocks that depend on eachother.
+/// Stack memory allocator for code generation.
+#[derive(Debug, Default)]
+struct StackAlloc {
+    /// The current size of the stack allocated memory.
+    current_size: usize,
+}
+
+impl StackAlloc {
+    /// Allocate memory on the stack with the given size.
+    pub fn alloc(&mut self, size: usize) -> usize {
+        self.current_size += size;
+        self.current_size
+    }
+}
+
+/// A module is a collection of functions.
 #[derive(Debug, Default)]
 pub struct Module<'a> {
-    blocks: Vec<&'a Block<'a>>,
+    funcs: Vec<&'a Function<'a>>,
 }
 
 impl<'a> Module<'a> {
-    pub fn append_block(&mut self, block: &'a Block<'a>) {
-        self.blocks.push(block);
+    pub fn append_func(&mut self, func: &'a Function) {
+        self.funcs.push(func);
     }
 
     pub fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
+        writeln!(w, "segment .text")?;
+        writeln!(w, "extern put_int")?;
+        for func in &self.funcs {
+            func.generate_code(w)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Function<'a> {
+    /// The name of the function which will be used as a label in native code.
+    name: String,
+    /// The blocks that belong to this function.
+    blocks: Vec<&'a Block>,
+}
+
+impl<'a> Function<'a> {
+    /// Create a new function with the given name.
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            blocks: vec![],
+        }
+    }
+
+    /// Append a block to this function.
+    pub fn append_block(&mut self, block: &'a Block) {
+        self.blocks.push(block);
+    }
+
+    /// Generate native code for this function.
+    pub fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
+        writeln!(w, "global {}", self.name)?;
+        writeln!(w, "{}:", self.name)?;
+        writeln!(w, "\tpush rbp")?;
+        writeln!(w, "\tmov rbp, rsp")?;
         for block in &self.blocks {
             block.generate_code(w)?;
         }
+        writeln!(w, "\tleave")?;
         Ok(())
     }
 }
 
 /// A block is a set of named set of instructions.
 #[derive(Debug)]
-pub struct Block<'a> {
+pub struct Block {
     /// The name will be used as a label in the resulting native code.
-    name: String,
+    pub name: String,
     /// List of instructions belonging to this block.
-    instructions: Vec<Instruction<'a>>,
+    instructions: Vec<Instruction>,
     /// Register allocator for code generation.
     registers: RegisterAlloc,
+    /// Stack memory allocator for code generation.
+    stack: StackAlloc,
 }
 
-impl<'a> Block<'a> {
+impl Block {
     /// Create a new empty block with the given name.
     pub fn new(name: String) -> Self {
         Self {
             name,
             instructions: vec![],
             registers: RegisterAlloc::new(),
+            stack: StackAlloc::default(),
         }
     }
 
@@ -147,47 +220,52 @@ impl<'a> Block<'a> {
     fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
         use Instruction::*;
 
-        writeln!(w, "segment .text")?;
-        writeln!(w, "extern put_int")?;
-        writeln!(w, "global {}", self.name)?;
         writeln!(w, "{}:", self.name)?;
         for instruction in &self.instructions {
             match *instruction {
                 Constant { storage, value } => {
-                    writeln!(w, "\tmov {}, {}", storage.name(), value)?;
+                    writeln!(w, "\tmov {}, {}", storage.code(), value)?;
+                }
+                Alloc { size } => {
+                    writeln!(w, "\tsub rsp, {}", size)?;
+                }
+                Store { value, storage } => {
+                    writeln!(w, "\tmov {}, {}", storage.code(), value.code())?;
                 }
                 Add { left, right } => {
-                    writeln!(w, "\tadd {}, {}", left.name(), right.name())?;
+                    writeln!(w, "\tadd {}, {}", left.code(), right.code())?;
                 }
                 Subtract { left, right } => {
-                    writeln!(w, "\tsub {}, {}", left.name(), right.name())?;
+                    writeln!(w, "\tsub {}, {}", left.code(), right.code())?;
                 }
                 Multiply { left, right } => {
-                    writeln!(w, "\timul {}, {}", left.name(), right.name())?;
+                    writeln!(w, "\timul {}, {}", left.code(), right.code())?;
                 }
                 Divide { left, right } => {
                     writeln!(w, "\tpush rdx")?;
                     writeln!(w, "\tmov rdx, 0")?;
-                    if left != Register::Rax {
+                    if left != ValueRef::Register(Register::Rax) {
                         writeln!(w, "\tpush rax")?;
-                        writeln!(w, "\tmov rax, {}", left.name())?;
+                        writeln!(w, "\tmov rax, {}", left.code())?;
                     }
-                    writeln!(w, "\tidiv {}", right.name())?;
-                    if left != Register::Rax {
-                        writeln!(w, "\tmov {}, rax", left.name())?;
+                    writeln!(w, "\tidiv {}", right.code())?;
+                    if left != ValueRef::Register(Register::Rax) {
+                        writeln!(w, "\tmov {}, rax", left.code())?;
                         writeln!(w, "\tpop rax ")?;
                     }
                     writeln!(w, "\tpop rdx")?;
                 }
-                JumpIfZero { value, dest } => {
-                    writeln!(w, "\tcmp {}, 0", value.name())?;
-                    writeln!(w, "\tje {}", dest.name)?;
+                Jump { ref dest } => {
+                    writeln!(w, "\tjmp {}", dest)?;
+                }
+                JumpIfZero { value, ref dest } => {
+                    writeln!(w, "\tcmp QWORD {}, 0", value.code())?;
+                    writeln!(w, "\tje {}", dest)?;
                 }
                 Call { ref func, arg } => {
-                    writeln!(w, "\tsub rsp, 8")?;
                     if let Some(arg) = arg {
-                        if arg != Register::Rdi {
-                            writeln!(w, "\tmov rdi, {}", arg.name())?;
+                        if arg != ValueRef::Register(Register::Rdi) {
+                            writeln!(w, "\tmov rdi, {}", arg.code())?;
                         }
                     }
                     writeln!(w, "\tcall {}", func)?;
@@ -197,31 +275,48 @@ impl<'a> Block<'a> {
                     // terminated anyway.
                     writeln!(w, "\tmov rax, 60")?;
                     // If the exit code is not already stored in RDI move it there.
-                    if exit_code != Register::Rdi {
-                        writeln!(w, "\tmov rdi, {}", exit_code.name())?;
+                    if exit_code != ValueRef::Register(Register::Rdi) {
+                        writeln!(w, "\tmov rdi, {}", exit_code.code())?;
                     }
                     writeln!(w, "\tsyscall")?;
                 }
             }
         }
-
         Ok(())
     }
 
     /// Append a `Constant` instruction to the end of this block.
     /// Returns a reference to the value to be used in other instructions.
     pub fn build_constant(&mut self, value: Value) -> ValueRef {
-        let storage = self.registers.alloc();
+        let storage = ValueRef::Register(self.registers.alloc());
         self.instructions
             .push(Instruction::Constant { storage, value });
         storage
+    }
+
+    /// Append an `Alloc` instruction to the end of this block.
+    /// Returns a reference to the memory allocated to be used in other instructions.
+    pub fn build_alloc(&mut self, size: usize) -> ValueRef {
+        self.instructions.push(Instruction::Alloc { size });
+        ValueRef::Memory(self.stack.alloc(size))
+    }
+
+    /// Append a `Store` instruction to the end of this block.
+    pub fn build_store(&mut self, value: ValueRef, storage: ValueRef) {
+        self.instructions
+            .push(Instruction::Store { value, storage });
+        if let ValueRef::Register(reg) = value {
+            self.registers.free(reg);
+        }
     }
 
     /// Append a `Add` instruction to the end of this block.
     /// Returns a reference to the result to be used in other instructions.
     pub fn build_add(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions.push(Instruction::Add { left, right });
-        self.registers.free(right);
+        if let ValueRef::Register(reg) = right {
+            self.registers.free(reg);
+        }
         left
     }
 
@@ -230,7 +325,9 @@ impl<'a> Block<'a> {
     pub fn build_subtract(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions
             .push(Instruction::Subtract { left, right });
-        self.registers.free(right);
+        if let ValueRef::Register(reg) = right {
+            self.registers.free(reg);
+        }
         left
     }
 
@@ -239,7 +336,9 @@ impl<'a> Block<'a> {
     pub fn build_multiply(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions
             .push(Instruction::Multiply { left, right });
-        self.registers.free(right);
+        if let ValueRef::Register(reg) = right {
+            self.registers.free(reg);
+        }
         left
     }
 
@@ -247,15 +346,24 @@ impl<'a> Block<'a> {
     /// Returns a reference to the result to be used in other instructions.
     pub fn build_divide(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions.push(Instruction::Divide { left, right });
-        self.registers.free(right);
+        if let ValueRef::Register(reg) = right {
+            self.registers.free(reg);
+        }
         left
     }
 
+    /// Append a `Jump` instruction to the end of this block.
+    pub fn build_jump(&mut self, dest: String) {
+        self.instructions.push(Instruction::Jump { dest });
+    }
+
     /// Append a `JumpIfZero` instruction to the end of this block.
-    pub fn build_jump_if_zero(&mut self, value: ValueRef, dest: &'a Block) {
+    pub fn build_jump_if_zero(&mut self, value: ValueRef, dest: String) {
         self.instructions
             .push(Instruction::JumpIfZero { value, dest });
-        self.registers.free(value);
+        if let ValueRef::Register(reg) = value {
+            self.registers.free(reg);
+        }
     }
 
     /// Append a `Call` instruction to the end of this block.
