@@ -1,4 +1,19 @@
 section .text
+; void put_int(int64_t n)
+; {
+;     char buf[32];
+;     size_t len = 1;
+;     buf[sizeof(buf) - len] = '\n';
+;     int neg = 0;
+;     if (n < 0) { neg = 1; n *= - 1; }
+;     do {
+;         buf[sizeof(buf) - len - 1] = (n % 10) + '0';
+;         len++;
+;         n /= 10;
+;     } while (n != 0);
+;     if (neg) { buf[sizeof(buf) - (len++) - 1] = '-';}
+;     write(1, &buf[sizeof(buf) - len], len);
+; }
 global put_int
 put_int:
         sub     rsp, 40
