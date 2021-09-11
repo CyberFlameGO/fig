@@ -126,29 +126,29 @@ impl Block {
 
         writeln!(w, "{}", self.name)?;
         for instruction in &self.instructions {
-            match instruction {
+            match *instruction {
                 Load { storage, value } => {
-                    let storage_reg = self.registers.get(*storage);
+                    let storage_reg = self.registers.get(storage);
                     writeln!(w, "\tmov {}, {}", storage_reg.name(), value)?;
                 }
                 Add { left, right } => {
-                    let left_reg = self.registers.get(*left);
-                    let right_reg = self.registers.get(*right);
+                    let left_reg = self.registers.get(left);
+                    let right_reg = self.registers.get(right);
                     writeln!(w, "\tadd {}, {}", left_reg.name(), right_reg.name())?;
                 }
                 Subtract { left, right } => {
-                    let left_reg = self.registers.get(*left);
-                    let right_reg = self.registers.get(*right);
+                    let left_reg = self.registers.get(left);
+                    let right_reg = self.registers.get(right);
                     writeln!(w, "\tsub {}, {}", left_reg.name(), right_reg.name())?;
                 }
                 Multiply { left, right } => {
-                    let left_reg = self.registers.get(*left);
-                    let right_reg = self.registers.get(*right);
+                    let left_reg = self.registers.get(left);
+                    let right_reg = self.registers.get(right);
                     writeln!(w, "\timul {}, {}", left_reg.name(), right_reg.name())?;
                 }
                 Divide { left, right } => {
-                    let left_reg = self.registers.get(*left);
-                    let right_reg = self.registers.get(*right);
+                    let left_reg = self.registers.get(left);
+                    let right_reg = self.registers.get(right);
                     writeln!(w, "\tpush rdx")?;
                     writeln!(w, "\tmov rdx, 0")?;
                     if left_reg != Register::Rax {
@@ -163,7 +163,7 @@ impl Block {
                     writeln!(w, "\tpop rdx")?;
                 }
                 Exit { exit_code } => {
-                    let exit_code_reg = self.registers.get(*exit_code);
+                    let exit_code_reg = self.registers.get(exit_code);
                     // We can savely overwrite RAX here because the process is about to be
                     // terminated anyway.
                     writeln!(w, "\tmov rax, 60")?;
