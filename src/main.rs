@@ -14,7 +14,7 @@ fn main() -> std::io::Result<()> {
     let mut start = Block::new("_start".into());
     let left = start.build_load(15);
     let right = start.build_load(5);
-    let sum = start.build_add(left, right);
+    let sum = start.build_divide(left, right);
     start.build_exit(sum);
 
     let mut file = OpenOptions::new()
