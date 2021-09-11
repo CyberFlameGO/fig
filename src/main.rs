@@ -12,10 +12,24 @@ fn run_command(cmd: &str) -> std::io::Result<Output> {
 
 fn main() -> std::io::Result<()> {
     let mut start = Block::new("_start".into());
-    let left = start.build_load(15);
+
+    let left = start.build_load(3);
     let right = start.build_load(5);
-    let sum = start.build_divide(left, right);
-    start.build_exit(sum);
+    let res = start.build_multiply(left, right);
+
+    let left = start.build_load(10);
+    let right = res;
+    let res = start.build_add(left, right);
+
+    let left = res;
+    let right = start.build_load(4);
+    let res = start.build_subtract(left, right);
+
+    let left = res;
+    let right = start.build_load(3);
+    let res = start.build_divide(left, right);
+
+    start.build_exit(res);
 
     let mut file = OpenOptions::new()
         .write(true)

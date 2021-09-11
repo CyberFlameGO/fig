@@ -4,10 +4,10 @@ use std::io::Write;
 type Value = i64;
 
 /// Reference to a value created by an instruction.
-type ValueRef = usize;
+pub type ValueRef = Register;
 
 /// Instructions of the IR to be compiled into native code.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq)]
 enum Instruction {
     /// Introduce a new value to the code to be used by other instructions.
     Load { storage: ValueRef, value: Value },
@@ -25,7 +25,7 @@ enum Instruction {
 
 /// Enumeration of general-purpose registers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Register {
+pub enum Register {
     Rax,
     Rbx,
     Rcx,
@@ -86,16 +86,13 @@ impl RegisterAlloc {
     }
 
     /// Allocate a new register and return its identifier.
-    pub fn alloc(&mut self) -> ValueRef {
-        let reg = self.free_regs.pop().expect("no free register");
-        let id = self.used_regs.len();
-        self.used_regs.push(reg);
-        id
+    pub fn alloc(&mut self) -> Register {
+        self.free_regs.pop().expect("no free register")
     }
 
-    /// Get an allocated register from its id.
-    pub fn get(&self, id: ValueRef) -> Register {
-        self.used_regs[id]
+    /// Free an allocated register so it can be allocated for something else again later.
+    pub fn free(&mut self, reg: Register) {
+        self.free_regs.push(reg);
     }
 }
 
@@ -128,48 +125,38 @@ impl Block {
         for instruction in &self.instructions {
             match *instruction {
                 Load { storage, value } => {
-                    let storage_reg = self.registers.get(storage);
-                    writeln!(w, "\tmov {}, {}", storage_reg.name(), value)?;
+                    writeln!(w, "\tmov {}, {}", storage.name(), value)?;
                 }
                 Add { left, right } => {
-                    let left_reg = self.registers.get(left);
-                    let right_reg = self.registers.get(right);
-                    writeln!(w, "\tadd {}, {}", left_reg.name(), right_reg.name())?;
+                    writeln!(w, "\tadd {}, {}", left.name(), right.name())?;
                 }
                 Subtract { left, right } => {
-                    let left_reg = self.registers.get(left);
-                    let right_reg = self.registers.get(right);
-                    writeln!(w, "\tsub {}, {}", left_reg.name(), right_reg.name())?;
+                    writeln!(w, "\tsub {}, {}", left.name(), right.name())?;
                 }
                 Multiply { left, right } => {
-                    let left_reg = self.registers.get(left);
-                    let right_reg = self.registers.get(right);
-                    writeln!(w, "\timul {}, {}", left_reg.name(), right_reg.name())?;
+                    writeln!(w, "\timul {}, {}", left.name(), right.name())?;
                 }
                 Divide { left, right } => {
-                    let left_reg = self.registers.get(left);
-                    let right_reg = self.registers.get(right);
                     writeln!(w, "\tpush rdx")?;
                     writeln!(w, "\tmov rdx, 0")?;
-                    if left_reg != Register::Rax {
+                    if left != Register::Rax {
                         writeln!(w, "\tpush rax")?;
-                        writeln!(w, "\tmov rax, {}", left_reg.name())?;
+                        writeln!(w, "\tmov rax, {}", left.name())?;
                     }
-                    writeln!(w, "\tidiv {}", right_reg.name())?;
-                    if left_reg != Register::Rax {
-                        writeln!(w, "\tmov {}, rax", left_reg.name())?;
+                    writeln!(w, "\tidiv {}", right.name())?;
+                    if left != Register::Rax {
+                        writeln!(w, "\tmov {}, rax", left.name())?;
                         writeln!(w, "\tpop rax ")?;
                     }
                     writeln!(w, "\tpop rdx")?;
                 }
                 Exit { exit_code } => {
-                    let exit_code_reg = self.registers.get(exit_code);
                     // We can savely overwrite RAX here because the process is about to be
                     // terminated anyway.
                     writeln!(w, "\tmov rax, 60")?;
                     // If the exit code is not already stored in RDI move it there.
-                    if exit_code_reg != Register::Rdi {
-                        writeln!(w, "\tmov rdi, {}", exit_code_reg.name())?;
+                    if exit_code != Register::Rdi {
+                        writeln!(w, "\tmov rdi, {}", exit_code.name())?;
                     }
                     writeln!(w, "\tsyscall")?;
                 }
@@ -191,6 +178,7 @@ impl Block {
     /// Returns a reference to the result to be used in other instructions.
     pub fn build_add(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions.push(Instruction::Add { left, right });
+        self.registers.free(right);
         left
     }
 
@@ -199,6 +187,7 @@ impl Block {
     pub fn build_subtract(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions
             .push(Instruction::Subtract { left, right });
+        self.registers.free(right);
         left
     }
 
@@ -207,6 +196,7 @@ impl Block {
     pub fn build_multiply(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions
             .push(Instruction::Multiply { left, right });
+        self.registers.free(right);
         left
     }
 
@@ -214,6 +204,7 @@ impl Block {
     /// Returns a reference to the result to be used in other instructions.
     pub fn build_divide(&mut self, left: ValueRef, right: ValueRef) -> ValueRef {
         self.instructions.push(Instruction::Divide { left, right });
+        self.registers.free(right);
         left
     }
 
