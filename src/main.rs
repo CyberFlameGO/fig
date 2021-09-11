@@ -1,38 +1,38 @@
-use std::{
-    fs::OpenOptions,
-    process::{Command, Output},
-};
+use std::{fs::OpenOptions, io::Write, process::Command};
 
 use fig::ir::{Block, Module};
 
-fn run_command(cmd: &str) -> std::io::Result<Output> {
+fn run_command(cmd: &str) -> std::io::Result<()> {
     println!("+ {}", cmd);
-    Command::new("sh").arg("-c").arg(cmd).output()
+    let output = Command::new("sh").arg("-c").arg(cmd).output()?;
+    std::io::stdout().write_all(&output.stdout)?;
+    std::io::stderr().write_all(&output.stderr)?;
+    Ok(())
 }
 
 fn main() -> std::io::Result<()> {
-    let mut if_zero = Block::new("if_zero".into());
-    let ten = if_zero.build_load(10);
-    if_zero.build_exit(ten);
-
     let mut start = Block::new("_start".into());
-    let value = start.build_load(0);
-    start.build_jump_if_zero(value, &if_zero);
 
-    let zero = start.build_load(0);
-    start.build_exit(zero);
+    let left = start.build_load(5);
+    let right = start.build_load(7);
+    let res = start.build_multiply(left, right);
+    start.build_call("put_int".into(), Some(res));
+
+    let exit = start.build_load(0);
+    start.build_exit(exit);
+
+    let mut module = Module::default();
+    module.append_block(&start);
 
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .open("output.s")?;
-    let mut module = Module::default();
-    module.append_block(&start);
-    module.append_block(&if_zero);
     module.generate_code(&mut file)?;
 
     run_command("nasm -f elf64 -o output.o output.s")?;
-    run_command("ld -o output output.o")?;
+    run_command("nasm -f elf64 -o lib/lib.o lib/lib.s")?;
+    run_command("ld -o output output.o lib/lib.o")?;
 
     Ok(())
 }

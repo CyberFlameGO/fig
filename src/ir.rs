@@ -24,6 +24,8 @@ enum Instruction<'a> {
         value: ValueRef,
         dest: &'a Block<'a>,
     },
+    /// Call a function by its name with a single argument.
+    Call { func: String, arg: Option<ValueRef> },
     /// Exit the process with the given exit code.
     Exit { exit_code: ValueRef },
 }
@@ -145,6 +147,9 @@ impl<'a> Block<'a> {
     fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
         use Instruction::*;
 
+        writeln!(w, "segment .text")?;
+        writeln!(w, "extern put_int")?;
+        writeln!(w, "global {}", self.name)?;
         writeln!(w, "{}:", self.name)?;
         for instruction in &self.instructions {
             match *instruction {
@@ -177,6 +182,15 @@ impl<'a> Block<'a> {
                 JumpIfZero { value, dest } => {
                     writeln!(w, "\tcmp {}, 0", value.name())?;
                     writeln!(w, "\tje {}", dest.name)?;
+                }
+                Call { ref func, arg } => {
+                    writeln!(w, "\tsub rsp, 8")?;
+                    if let Some(arg) = arg {
+                        if arg != Register::Rdi {
+                            writeln!(w, "\tmov rdi, {}", arg.name())?;
+                        }
+                    }
+                    writeln!(w, "\tcall {}", func)?;
                 }
                 Exit { exit_code } => {
                     // We can savely overwrite RAX here because the process is about to be
@@ -241,6 +255,11 @@ impl<'a> Block<'a> {
         self.instructions
             .push(Instruction::JumpIfZero { value, dest });
         self.registers.free(value);
+    }
+
+    /// Append a `Call` instruction to the end of this block.
+    pub fn build_call(&mut self, func: String, arg: Option<ValueRef>) {
+        self.instructions.push(Instruction::Call { func, arg });
     }
 
     /// Append an `Exit` instruction to the end of this block.

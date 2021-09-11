@@ -1,4 +1,4 @@
 /target
 *.o
-*.s
+output.s
 output
