@@ -7,8 +7,8 @@ type Value = i64;
 pub type ValueRef = Register;
 
 /// Instructions of the IR to be compiled into native code.
-#[derive(Debug, PartialEq, Eq)]
-enum Instruction {
+#[derive(Debug)]
+enum Instruction<'a> {
     /// Introduce a new value to the code to be used by other instructions.
     Load { storage: ValueRef, value: Value },
     /// Add two values.
@@ -19,6 +19,11 @@ enum Instruction {
     Multiply { left: ValueRef, right: ValueRef },
     /// Divide two values.
     Divide { left: ValueRef, right: ValueRef },
+    /// Jump to the given block if the value is 0.
+    JumpIfZero {
+        value: ValueRef,
+        dest: &'a Block<'a>,
+    },
     /// Exit the process with the given exit code.
     Exit { exit_code: ValueRef },
 }
@@ -96,18 +101,37 @@ impl RegisterAlloc {
     }
 }
 
+/// A module is a collection of blocks that depend on eachother.
+#[derive(Debug, Default)]
+pub struct Module<'a> {
+    blocks: Vec<&'a Block<'a>>,
+}
+
+impl<'a> Module<'a> {
+    pub fn append_block(&mut self, block: &'a Block<'a>) {
+        self.blocks.push(block);
+    }
+
+    pub fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
+        for block in &self.blocks {
+            block.generate_code(w)?;
+        }
+        Ok(())
+    }
+}
+
 /// A block is a set of named set of instructions.
 #[derive(Debug)]
-pub struct Block {
+pub struct Block<'a> {
     /// The name will be used as a label in the resulting native code.
     name: String,
     /// List of instructions belonging to this block.
-    instructions: Vec<Instruction>,
+    instructions: Vec<Instruction<'a>>,
     /// Register allocator for code generation.
     registers: RegisterAlloc,
 }
 
-impl Block {
+impl<'a> Block<'a> {
     /// Create a new empty block with the given name.
     pub fn new(name: String) -> Self {
         Self {
@@ -118,7 +142,7 @@ impl Block {
     }
 
     /// Generate the native code for this block and write it to the given Writer.
-    pub fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
+    fn generate_code(&self, w: &mut impl Write) -> std::io::Result<()> {
         use Instruction::*;
 
         writeln!(w, "{}:", self.name)?;
@@ -149,6 +173,10 @@ impl Block {
                         writeln!(w, "\tpop rax ")?;
                     }
                     writeln!(w, "\tpop rdx")?;
+                }
+                JumpIfZero { value, dest } => {
+                    writeln!(w, "\tcmp {}, 0", value.name())?;
+                    writeln!(w, "\tje {}", dest.name)?;
                 }
                 Exit { exit_code } => {
                     // We can savely overwrite RAX here because the process is about to be
@@ -206,6 +234,13 @@ impl Block {
         self.instructions.push(Instruction::Divide { left, right });
         self.registers.free(right);
         left
+    }
+
+    /// Append a `JumpIfZero` instruction to the end of this block.
+    pub fn build_jump_if_zero(&mut self, value: ValueRef, dest: &'a Block) {
+        self.instructions
+            .push(Instruction::JumpIfZero { value, dest });
+        self.registers.free(value);
     }
 
     /// Append an `Exit` instruction to the end of this block.

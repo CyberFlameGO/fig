@@ -3,7 +3,7 @@ use std::{
     process::{Command, Output},
 };
 
-use fig::ir::Block;
+use fig::ir::{Block, Module};
 
 fn run_command(cmd: &str) -> std::io::Result<Output> {
     println!("+ {}", cmd);
@@ -11,31 +11,25 @@ fn run_command(cmd: &str) -> std::io::Result<Output> {
 }
 
 fn main() -> std::io::Result<()> {
+    let mut if_zero = Block::new("if_zero".into());
+    let ten = if_zero.build_load(10);
+    if_zero.build_exit(ten);
+
     let mut start = Block::new("_start".into());
+    let value = start.build_load(0);
+    start.build_jump_if_zero(value, &if_zero);
 
-    let left = start.build_load(3);
-    let right = start.build_load(5);
-    let res = start.build_multiply(left, right);
-
-    let left = start.build_load(10);
-    let right = res;
-    let res = start.build_add(left, right);
-
-    let left = res;
-    let right = start.build_load(4);
-    let res = start.build_subtract(left, right);
-
-    let left = res;
-    let right = start.build_load(3);
-    let res = start.build_divide(left, right);
-
-    start.build_exit(res);
+    let zero = start.build_load(0);
+    start.build_exit(zero);
 
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .open("output.s")?;
-    start.generate_code(&mut file)?;
+    let mut module = Module::default();
+    module.append_block(&start);
+    module.append_block(&if_zero);
+    module.generate_code(&mut file)?;
 
     run_command("nasm -f elf64 -o output.o output.s")?;
     run_command("ld -o output output.o")?;
