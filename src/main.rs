@@ -27,6 +27,7 @@ fn main() -> std::io::Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(true)
         .open("output.s")?;
     module.generate_code(&mut file)?;
 
